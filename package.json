@@ -1,0 +1,21 @@
+{
+  "name": "nine-eight-workers",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Shared infrastructure and individual Cloudflare Workers for nine.eight's custom AI workers.",
+  "scripts": {
+    "dev": "pnpm --filter hello-agent dev",
+    "deploy": "pnpm --filter hello-agent deploy",
+    "typecheck": "pnpm -r run typecheck",
+    "build": "pnpm -r --if-present run build"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "wrangler": "^4.118.0",
+    "@cloudflare/workers-types": "^5.20260801.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "packageManager": "pnpm@9.12.0"
+}
