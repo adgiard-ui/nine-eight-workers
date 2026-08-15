@@ -1,0 +1,12 @@
+name = "lead-qualifier"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Secrets are intentionally NOT set here — never commit secrets to
+# wrangler.toml, even in [vars]. Instead:
+#   Local dev:   copy .dev.vars.example to .dev.vars and fill in real values
+#   Production:  wrangler secret put <NAME>   (once per secret, per environment)
+#
+# Required: ANTHROPIC_API_KEY, HUBSPOT_ACCESS_TOKEN, NANGO_SECRET_KEY,
+# NANGO_CONNECTION_ID. Optional: CLAUDE_MODEL.

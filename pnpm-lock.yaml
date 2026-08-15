@@ -32,6 +32,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/core
 
+  workers/lead-qualifier:
+    dependencies:
+      '@nine-eight/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+
   workers/research-assistant:
     dependencies:
       '@nine-eight/core':

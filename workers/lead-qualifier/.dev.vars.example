@@ -1,0 +1,7 @@
+ANTHROPIC_API_KEY=your-anthropic-key-here
+HUBSPOT_ACCESS_TOKEN=your-hubspot-private-app-token-here
+NANGO_SECRET_KEY=your-nango-secret-key-here
+NANGO_CONNECTION_ID=your-nango-slack-connection-id-here
+
+# Optional — overrides the default model (claude-sonnet-4-5-20250929) if set.
+CLAUDE_MODEL=claude-sonnet-4-5-20250929
