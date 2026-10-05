@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeHtmlEntities, extractLocUrls, normalizeUrl } from "./parse";
+import { decodeHtmlEntities, extractLocUrls, normalizeUrl, resolveCategoryMeta } from "./parse";
 
 describe("normalizeUrl", () => {
   it("fixes a doubled host", () => {
@@ -54,5 +54,33 @@ describe("decodeHtmlEntities", () => {
 
   it("leaves plain text untouched", () => {
     expect(decodeHtmlEntities("Astro Flashlight")).toBe("Astro Flashlight");
+  });
+});
+
+describe("resolveCategoryMeta", () => {
+  it("resolves categoryId and categoryName from the data-categoryId/data-category attributes", () => {
+    const html = `<div data-categoryid="339" data-category="Flashlights &amp; Lanterns"></div>`;
+    expect(resolveCategoryMeta(html, "https://www.pcna.com/en-us/flashlights-lanterns")).toEqual({
+      categoryId: "339",
+      categoryName: "Flashlights & Lanterns",
+    });
+  });
+
+  it("falls back to a regex scan for categoryId when the attribute is absent", () => {
+    const html = `<script>var config = { categoryId: 339, other: 1 };</script>`;
+    const result = resolveCategoryMeta(html, "https://www.pcna.com/en-us/flashlights-lanterns");
+    expect(result.categoryId).toBe("339");
+  });
+
+  it("falls back to deriving categoryName from the URL slug when no attribute is present", () => {
+    const html = `<div>no category data here</div>`;
+    const result = resolveCategoryMeta(html, "https://www.pcna.com/en-us/flashlights-lanterns");
+    expect(result.categoryName).toBe("Flashlights Lanterns");
+  });
+
+  it("returns a null categoryId when neither the attribute nor the fallback regex finds one", () => {
+    const html = `<div>nothing useful</div>`;
+    const result = resolveCategoryMeta(html, "https://www.pcna.com/en-us/flashlights-lanterns");
+    expect(result.categoryId).toBeNull();
   });
 });
