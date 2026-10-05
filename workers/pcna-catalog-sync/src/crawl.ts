@@ -75,17 +75,40 @@ export async function runCrawl(env: Env): Promise<RunSummary> {
       }
 
       // 3. Paginate LoadMoreProducts until a page returns no products.
+      // PCNA doesn't signal "exhausted" with an empty 200 page like the
+      // design assumed — the real site 500s on the first page past the
+      // end. Once we've already seen at least one real page of products
+      // for this category, treat a page fetch failure as "paged past the
+      // end" (log + stop normally) rather than a real failure; a failure
+      // on page 1 itself (before any products were ever seen) still means
+      // a genuine category-level problem and propagates to the outer catch.
       let pageNumber = 1;
+      let sawAnyProducts = false;
       while (true) {
-        const fragment = await fetcher.fetchProductPage({
-          categoryId: meta.categoryId,
-          categoryName: meta.categoryName,
-          pageNumber,
-        });
+        let fragment: string;
+        try {
+          fragment = await fetcher.fetchProductPage({
+            categoryId: meta.categoryId,
+            categoryName: meta.categoryName,
+            pageNumber,
+          });
+        } catch (pageError) {
+          if (sawAnyProducts) {
+            logger.info("pcna_pagination_assumed_exhausted", {
+              url: category.categoryUrl,
+              pageNumber,
+              error: String(pageError),
+            });
+            break;
+          }
+          throw pageError;
+        }
+
         const products = parseProductFragment(fragment);
         if (products.length === 0) {
           break;
         }
+        sawAnyProducts = true;
         for (const product of products) {
           observedProducts.set(product.sku, product); // 4. Dedup by SKU.
         }
