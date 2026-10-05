@@ -1,6 +1,7 @@
 name = "pcna-catalog-sync"
 main = "src/index.ts"
-compatibility_date = "2026-10-05"
+# Pinned to the latest date this repo's wrangler/workerd (4.118.0) actually supports
+compatibility_date = "2026-08-06"
 compatibility_flags = ["nodejs_compat"]
 
 [triggers]
