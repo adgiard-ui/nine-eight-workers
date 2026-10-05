@@ -74,8 +74,6 @@ export async function runCrawl(env: Env): Promise<RunSummary> {
         continue;
       }
 
-      crawledCategoryIds.add(meta.categoryId);
-
       // 3. Paginate LoadMoreProducts until a page returns no products.
       let pageNumber = 1;
       while (true) {
@@ -94,6 +92,11 @@ export async function runCrawl(env: Env): Promise<RunSummary> {
         pageNumber++;
       }
 
+      // Only mark this category as "crawled" (for discontinuation scoping)
+      // once pagination has fully completed without throwing — a partial
+      // failure mid-pagination must not make computeSkusToMarkUnseen treat
+      // this category's unfetched pages as "confirmed gone".
+      crawledCategoryIds.add(meta.categoryId);
       await markCategoryCrawled(env.DB, category.categoryUrl, meta.categoryId, meta.categoryName, now);
     } catch (error) {
       logger.error("pcna_category_crawl_failed", { url: category.categoryUrl, error: String(error) });
