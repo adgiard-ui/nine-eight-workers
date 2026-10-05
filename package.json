@@ -7,7 +7,8 @@
     "dev": "pnpm --filter hello-agent dev",
     "deploy": "pnpm --filter hello-agent deploy",
     "typecheck": "pnpm -r run typecheck",
-    "build": "pnpm -r --if-present run build"
+    "build": "pnpm -r --if-present run build",
+    "test": "pnpm -r --if-present run test"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

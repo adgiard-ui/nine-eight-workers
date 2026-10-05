@@ -1,0 +1,35 @@
+name = "pcna-catalog-sync"
+main = "src/index.ts"
+compatibility_date = "2026-10-05"
+compatibility_flags = ["nodejs_compat"]
+
+[triggers]
+# Weekly, Monday 10:00 AM US/Eastern (fixed UTC — drifts 1hr across the
+# DST boundary; see the design doc). Edit this line to change cadence.
+crons = ["0 14 * * 1"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "pcna-catalog-sync-db"
+database_id = "REPLACE_WITH_D1_DATABASE_ID" # from `wrangler d1 create` — see README
+
+[[r2_buckets]]
+binding = "CSV_BUCKET"
+bucket_name = "pcna-catalog-sync-csv"
+
+# Non-secret run config. Unlike lead-qualifier (which has no non-sensitive
+# config to separate out), these are plain [vars] so they're
+# git-reviewable and editable without a secret rotation.
+[vars]
+SLACK_CHANNEL = "#pcna-catalog-sync"
+MAX_CATEGORIES_PER_RUN = "50"
+FETCH_DELAY_MS = "500"
+PAGE_SIZE = "200"
+
+# Secrets are intentionally NOT set here — never commit secrets to
+# wrangler.toml, even in [vars]. Instead:
+#   Local dev:   copy .dev.vars.example to .dev.vars and fill in real values
+#   Production:  wrangler secret put <NAME>   (once per secret, per environment)
+#
+# Required secrets: NANGO_SECRET_KEY, NANGO_CONNECTION_ID, MANUAL_TRIGGER_SECRET.
+# Reserved, currently unused by any code path: ANTHROPIC_API_KEY, CLAUDE_MODEL.

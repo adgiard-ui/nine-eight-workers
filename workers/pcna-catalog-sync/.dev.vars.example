@@ -1,0 +1,13 @@
+NANGO_SECRET_KEY=your-nango-secret-key-here
+NANGO_CONNECTION_ID=your-nango-slack-connection-id-here
+MANUAL_TRIGGER_SECRET=choose-a-long-random-string-here
+
+# Reserved for a future Claude-based extraction step. Nothing in this
+# worker calls model-router or the agent loop yet — see the design doc.
+ANTHROPIC_API_KEY=your-anthropic-key-here
+CLAUDE_MODEL=claude-sonnet-4-5-20250929
+
+# Optional local overrides of wrangler.toml's [vars] block, for a small
+# validation run before a full crawl. Uncomment and lower this to test
+# against 1-2 categories instead of the full 50.
+# MAX_CATEGORIES_PER_RUN=2
