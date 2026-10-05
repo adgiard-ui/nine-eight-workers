@@ -81,3 +81,31 @@ First worker with real code-level guardrails beyond the happy path: no auto-retr
 
 ## Change log
 2026-08-15: Scaffolded, reusing packages/core unchanged. Guardrails implemented and smoke-tested locally (400/405 validation paths, and a live request through the agent loop that failed gracefully on an invalid API key, confirming structured error logging and the fetch-failure guardrail path). HubSpot's `hs_lead_status` values remapped from the originally spec'd `OPEN_QUALIFIED` to the portal's actual stock value `OPEN` after confirming with the client. Custom property internal name corrected from `nine_eight_ai_notes` to `nineeight_ai_notes` — see ARCHITECTURE.md decisions log.
+
+# Worker: pcna-catalog-sync
+
+## Client
+Internal pipeline tooling — phase one of a pipeline that will eventually feed NetSuite.
+
+## Process it runs
+Crawls PCNA's public product catalog on a schedule (27 sitemaps -> category pages -> paginated product listings), deduplicates by SKU, diffs against a D1 snapshot, writes NEW/CHANGED rows to a CSV in R2, and posts a Slack summary. Deterministic data processing — no agent loop; ANTHROPIC_API_KEY/CLAUDE_MODEL are reserved for a future Claude-based extraction step and unused by any current code path.
+
+## Trigger
+Weekly Cloudflare Cron Trigger (Monday 10am Eastern), plus a POST endpoint for manual runs (synchronous by default, `?async=true` for a full-catalog run), gated by a shared `X-Trigger-Secret` header.
+
+## Tools it uses
+- fetch.ts (direct, unauthenticated requests to pcna.com — cookie jar, configurable delay, browser User-Agent)
+- post_run_summary_to_slack (via Nango proxy to Slack's chat.postMessage)
+
+## Integrations
+- PCNA public catalog (direct HTTP, no auth yet — isolated in fetch.ts so dealer-auth or a PromoStandards API swap only touches that file)
+- Slack, via Nango (Provider-Config-Key: slack)
+
+## Deployment URL
+Not yet deployed to production. Validated end-to-end against the real live PCNA site via local `wrangler dev` (815 real products seen in a 2-category smoke run; correctly classified as NEW on first run, UNCHANGED on a repeat run). Production deploy pending manual D1/R2/secret setup (see the worker's README checklist).
+
+## Retainer notes
+First worker in this repo using D1, R2, and Cron Triggers. First worker with an automated unit test suite (Vitest, scoped to this worker's pure logic only — parsing, hashing/classification, CSV, fetch module cookie-jar/delay behavior). Discontinuation detection (`seen_in_last_run`) is deliberately scoped to categories actually crawled in a given run, not the whole catalog — `MAX_CATEGORIES_PER_RUN` caps per-run coverage and rotates least-recently-crawled-first, so most categories aren't visited on any single run. Two real-world gotchas found and fixed during live validation: (1) PCNA's product-listing fragment carries a per-row price-wrapper element with a hardcoded placeholder `data-sku`, with no other product attributes — the parser now requires `data-productname` alongside `data-sku` to exclude it; (2) PCNA signals "no more pages" with an HTTP 500 on the first overrun page, not an empty 200 — see ARCHITECTURE.md's decisions log.
+
+## Change log
+2026-10-05: Scaffolded per the design doc (`docs/superpowers/specs/2026-10-05-pcna-catalog-sync-design.md`) and implementation plan (`docs/superpowers/plans/2026-10-05-pcna-catalog-sync.md`); validated end-to-end against the real PCNA site, including two real-world fixes to the parser and pagination-termination logic.
