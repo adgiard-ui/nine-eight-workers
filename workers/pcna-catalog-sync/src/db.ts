@@ -170,3 +170,15 @@ export async function markCategoryCrawled(
     .bind(categoryId, categoryName, crawledAt, categoryUrl)
     .run();
 }
+
+/**
+ * Advances last_crawled_at WITHOUT touching category_id/category_name,
+ * for a category that failed this run (unresolved ID, or any thrown
+ * error). Without this, a category that fails deterministically would
+ * sort first forever (NULL last_crawled_at sorts first in
+ * getCategoriesToCrawl) and permanently occupy a slot in every future
+ * run's MAX_CATEGORIES_PER_RUN-capped rotation.
+ */
+export async function markCategoryAttempted(db: D1Database, categoryUrl: string, attemptedAt: string): Promise<void> {
+  await db.prepare(`UPDATE categories SET last_crawled_at = ? WHERE category_url = ?`).bind(attemptedAt, categoryUrl).run();
+}

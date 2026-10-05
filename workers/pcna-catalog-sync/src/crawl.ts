@@ -4,13 +4,14 @@ import {
   getCategoriesToCrawl,
   getStoredProductsBySkus,
   getStoredSkusByCategoryIds,
+  markCategoryAttempted,
   markCategoryCrawled,
   markSkusUnseen,
   upsertDiscoveredCategories,
   upsertProducts,
 } from "./db";
 import { classifyProduct, computeSkusToMarkUnseen, hashProduct } from "./diff";
-import { createCrawlerFetcher } from "./fetch";
+import { createCrawlerFetcher, type CrawlerFetcher } from "./fetch";
 import { extractLocUrls, normalizeUrl, parseProductFragment, resolveCategoryMeta } from "./parse";
 import type { CookieJar, Env, Product, RunSummary } from "./types";
 
@@ -71,59 +72,46 @@ export async function runCrawl(env: Env): Promise<RunSummary> {
       if (!meta.categoryId) {
         logger.warn("pcna_category_id_unresolved", { url: category.categoryUrl });
         failedCount++;
+        await markCategoryAttempted(env.DB, category.categoryUrl, now);
         continue;
       }
 
-      // 3. Paginate LoadMoreProducts until a page returns no products.
-      // PCNA doesn't signal "exhausted" with an empty 200 page like the
-      // design assumed — the real site 500s on the first page past the
-      // end. Once we've already seen at least one real page of products
-      // for this category, treat a page fetch failure as "paged past the
-      // end" (log + stop normally) rather than a real failure; a failure
-      // on page 1 itself (before any products were ever seen) still means
-      // a genuine category-level problem and propagates to the outer catch.
-      let pageNumber = 1;
-      let sawAnyProducts = false;
-      while (true) {
-        let fragment: string;
-        try {
-          fragment = await fetcher.fetchProductPage({
-            categoryId: meta.categoryId,
-            categoryName: meta.categoryName,
-            pageNumber,
-          });
-        } catch (pageError) {
-          if (sawAnyProducts) {
-            logger.info("pcna_pagination_assumed_exhausted", {
-              url: category.categoryUrl,
-              pageNumber,
-              error: String(pageError),
-            });
-            break;
-          }
-          throw pageError;
-        }
-
-        const products = parseProductFragment(fragment);
-        if (products.length === 0) {
-          break;
-        }
-        sawAnyProducts = true;
-        for (const product of products) {
-          observedProducts.set(product.sku, product); // 4. Dedup by SKU.
-        }
-        pageNumber++;
+      const { products, fullyEnumerated } = await enumerateCategoryProducts(fetcher, {
+        categoryId: meta.categoryId,
+        categoryName: meta.categoryName,
+      });
+      for (const product of products) {
+        // Stamp the category actually being crawled onto every observed
+        // product rather than trusting whichever data-categoryId/data-category
+        // happened to land on the winning (last-in-document-order) matching
+        // element — real PCNA markup doesn't guarantee every element
+        // matching [data-sku][data-productname] carries the same attributes.
+        // This makes "every stored category_id is one of crawledCategoryIds"
+        // true by construction, which is the invariant discontinuation
+        // scoping depends on.
+        observedProducts.set(product.sku, {
+          ...product,
+          categoryId: meta.categoryId,
+          category: meta.categoryName,
+        });
       }
 
-      // Only mark this category as "crawled" (for discontinuation scoping)
-      // once pagination has fully completed without throwing — a partial
-      // failure mid-pagination must not make computeSkusToMarkUnseen treat
-      // this category's unfetched pages as "confirmed gone".
-      crawledCategoryIds.add(meta.categoryId);
+      // Only grant discontinuation-scoping authority over this category
+      // when pagination actually saw at least one real product this run —
+      // a zero-products-on-page-1 result (markup change, anti-bot
+      // interstitial, or a genuinely empty category all look identical)
+      // must not be trusted to mean "confirmed nothing here," since that
+      // would mass-mark every previously-stored product in this category
+      // as discontinued. markCategoryCrawled still runs regardless, so
+      // rotation bookkeeping advances either way.
+      if (fullyEnumerated) {
+        crawledCategoryIds.add(meta.categoryId);
+      }
       await markCategoryCrawled(env.DB, category.categoryUrl, meta.categoryId, meta.categoryName, now);
     } catch (error) {
       logger.error("pcna_category_crawl_failed", { url: category.categoryUrl, error: String(error) });
       failedCount++;
+      await markCategoryAttempted(env.DB, category.categoryUrl, now);
     }
   }
 
@@ -173,6 +161,61 @@ export async function runCrawl(env: Env): Promise<RunSummary> {
 
   logger.info("pcna_crawl_run_complete", { ...summary });
   return summary;
+}
+
+/**
+ * Paginates LoadMoreProducts for one category until exhausted. Confirmed
+ * against the real site: PCNA does NOT return an empty 200 once a
+ * category's pages run out — it 500s on the first overrun page. So once
+ * at least one page has yielded real products, a page-fetch failure is
+ * treated as "paged past the end," not a category-level failure. A
+ * failure on page 1 itself (before any products were ever seen) is still
+ * a real failure and propagates to the caller.
+ *
+ * `fullyEnumerated` tells the caller whether this category's product list
+ * can be trusted as complete — false if page 1 itself returned zero
+ * products (ambiguous: a genuinely empty category vs. a blocked/broken
+ * request look identical). The caller uses this to decide whether to
+ * grant discontinuation-scoping authority over this category.
+ */
+export async function enumerateCategoryProducts(
+  fetcher: CrawlerFetcher,
+  meta: { categoryId: string; categoryName: string }
+): Promise<{ products: Product[]; fullyEnumerated: boolean }> {
+  const products: Product[] = [];
+  let pageNumber = 1;
+  let sawAnyProducts = false;
+
+  while (true) {
+    let fragment: string;
+    try {
+      fragment = await fetcher.fetchProductPage({
+        categoryId: meta.categoryId,
+        categoryName: meta.categoryName,
+        pageNumber,
+      });
+    } catch (pageError) {
+      if (sawAnyProducts) {
+        logger.warn("pcna_pagination_assumed_exhausted", {
+          categoryId: meta.categoryId,
+          pageNumber,
+          error: String(pageError),
+        });
+        break;
+      }
+      throw pageError;
+    }
+
+    const pageProducts = parseProductFragment(fragment);
+    if (pageProducts.length === 0) {
+      break;
+    }
+    sawAnyProducts = true;
+    products.push(...pageProducts);
+    pageNumber++;
+  }
+
+  return { products, fullyEnumerated: sawAnyProducts };
 }
 
 function buildCsvKey(startedAt: Date): string {
