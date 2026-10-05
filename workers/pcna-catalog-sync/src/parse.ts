@@ -20,7 +20,10 @@ export function decodeHtmlEntities(text: string): string {
     if (entity[0] === "#") {
       const isHex = entity[1] === "x" || entity[1] === "X";
       const codePoint = parseInt(entity.slice(isHex ? 2 : 1), isHex ? 16 : 10);
-      return Number.isNaN(codePoint) ? match : String.fromCodePoint(codePoint);
+      if (Number.isNaN(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
+        return match;
+      }
+      return String.fromCodePoint(codePoint);
     }
     return NAMED_ENTITIES[entity] ?? match;
   });
@@ -73,7 +76,7 @@ export function resolveCategoryMeta(
 
   const categoryIdAttr = root.querySelector("[data-categoryid]")?.getAttribute("data-categoryid");
   const fallbackMatch = categoryPageHtml.match(/categoryId["']?\s*[:=]\s*["']?(\d+)/i);
-  const categoryId = categoryIdAttr ?? fallbackMatch?.[1] ?? null;
+  const categoryId = categoryIdAttr || fallbackMatch?.[1] || null;
 
   const categoryNameAttr = root.querySelector("[data-category]")?.getAttribute("data-category");
   const categoryName = categoryNameAttr ? decodeHtmlEntities(categoryNameAttr) : deriveCategoryNameFromUrl(categoryUrl);

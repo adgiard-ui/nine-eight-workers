@@ -55,6 +55,10 @@ describe("decodeHtmlEntities", () => {
   it("leaves plain text untouched", () => {
     expect(decodeHtmlEntities("Astro Flashlight")).toBe("Astro Flashlight");
   });
+
+  it("leaves an out-of-range numeric entity untouched rather than throwing", () => {
+    expect(decodeHtmlEntities("&#99999999;")).toBe("&#99999999;");
+  });
 });
 
 describe("resolveCategoryMeta", () => {
@@ -82,6 +86,12 @@ describe("resolveCategoryMeta", () => {
     const html = `<div>nothing useful</div>`;
     const result = resolveCategoryMeta(html, "https://www.pcna.com/en-us/flashlights-lanterns");
     expect(result.categoryId).toBeNull();
+  });
+
+  it("falls through to the regex fallback when data-categoryid is present but empty", () => {
+    const html = `<div data-categoryid=""></div><script>var config = { categoryId: 339 };</script>`;
+    const result = resolveCategoryMeta(html, "https://www.pcna.com/en-us/flashlights-lanterns");
+    expect(result.categoryId).toBe("339");
   });
 });
 

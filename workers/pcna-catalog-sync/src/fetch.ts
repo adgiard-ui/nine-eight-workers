@@ -40,9 +40,9 @@ export function createCrawlerFetcher(
 
     for (const setCookie of res.headers.getSetCookie()) {
       const [pair] = setCookie.split(";");
-      const [name, value] = pair.split("=");
-      if (name && value !== undefined) {
-        cookieJar.set(name.trim(), value.trim());
+      const equalsIndex = pair.indexOf("=");
+      if (equalsIndex > 0) {
+        cookieJar.set(pair.slice(0, equalsIndex).trim(), pair.slice(equalsIndex + 1).trim());
       }
     }
 

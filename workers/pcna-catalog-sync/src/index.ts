@@ -1,14 +1,19 @@
 import { logger } from "@nine-eight/core/logger";
 import { runCrawl } from "./crawl";
-import { postRunSummaryToSlack } from "./slack";
+import { postRunFailureToSlack, postRunSummaryToSlack } from "./slack";
 import type { Env, RunSummary } from "./types";
 
 export type { Env };
 
 async function runAndNotify(env: Env): Promise<RunSummary> {
-  const summary = await runCrawl(env);
-  await postRunSummaryToSlack(env, summary);
-  return summary;
+  try {
+    const summary = await runCrawl(env);
+    await postRunSummaryToSlack(env, summary);
+    return summary;
+  } catch (error) {
+    await postRunFailureToSlack(env, error);
+    throw error;
+  }
 }
 
 function jsonResponse(body: unknown, status = 200): Response {

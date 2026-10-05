@@ -37,6 +37,21 @@ describe("createCrawlerFetcher", () => {
     expect(secondRequestInit.headers.Cookie).toBe("ASP.NET_SessionId=abc123");
   });
 
+  it("correctly parses a Set-Cookie value that itself contains an equals sign", async () => {
+    const cookieJar: CookieJar = new Map();
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(fakeResponse("ok", { setCookie: ["session=abc123==; Path=/"] }))
+      .mockResolvedValueOnce(fakeResponse("ok"));
+    const fetcher = createCrawlerFetcher(cookieJar, { delayMs: 0, pageSize: 200 }, fetchImpl);
+
+    await fetcher.fetchSitemapIndex();
+    await fetcher.fetchChildSitemap("https://www.pcna.com/sitemaps/AllXMLSitemap_0.xml");
+
+    const [, secondRequestInit] = fetchImpl.mock.calls[1];
+    expect(secondRequestInit.headers.Cookie).toBe("session=abc123==");
+  });
+
   it("sets a realistic browser User-Agent on every request", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(fakeResponse("ok"));
     const fetcher = createCrawlerFetcher(new Map(), { delayMs: 0, pageSize: 200 }, fetchImpl);

@@ -10,6 +10,20 @@ import type { Env, RunSummary } from "./types";
  * itself look like it failed.
  */
 export async function postRunSummaryToSlack(env: Env, summary: RunSummary): Promise<void> {
+  await postTextToSlack(env, buildSummaryMessage(summary));
+}
+
+/**
+ * Posts a short failure notification when runCrawl itself throws — the
+ * one case the summary post above never reaches, since a thrown run has
+ * no summary to report. Never throws itself, same as the summary post.
+ */
+export async function postRunFailureToSlack(env: Env, error: unknown): Promise<void> {
+  const message = error instanceof Error ? error.message : String(error);
+  await postTextToSlack(env, `*PCNA catalog sync* — run failed: ${message}`);
+}
+
+async function postTextToSlack(env: Env, text: string): Promise<void> {
   let res: Response;
   try {
     res = await fetch("https://api.nango.dev/proxy/chat.postMessage", {
@@ -20,7 +34,7 @@ export async function postRunSummaryToSlack(env: Env, summary: RunSummary): Prom
         "Connection-Id": env.NANGO_CONNECTION_ID,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ channel: env.SLACK_CHANNEL, text: buildSummaryMessage(summary) }),
+      body: JSON.stringify({ channel: env.SLACK_CHANNEL, text }),
     });
   } catch (error) {
     logger.error("pcna_slack_post_network_error", { error: String(error) });
@@ -32,7 +46,17 @@ export async function postRunSummaryToSlack(env: Env, summary: RunSummary): Prom
     return;
   }
 
-  const data = (await res.json()) as { ok?: boolean; error?: string };
+  // Fix (final review, Minor): this was previously outside any try/catch
+  // — a non-JSON 200 response from Nango would throw here and break this
+  // function's "never throws" contract, turning a successful crawl into
+  // a reported run failure.
+  let data: { ok?: boolean; error?: string };
+  try {
+    data = (await res.json()) as { ok?: boolean; error?: string };
+  } catch (error) {
+    logger.error("pcna_slack_post_invalid_json", { error: String(error) });
+    return;
+  }
   if (data.ok === false) {
     logger.error("pcna_slack_post_rejected", { error: data.error });
   }
