@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeHtmlEntities, extractLocUrls, normalizeUrl, resolveCategoryMeta } from "./parse";
+import { decodeHtmlEntities, extractLocUrls, normalizeUrl, resolveCategoryMeta, parseProductFragment } from "./parse";
 
 describe("normalizeUrl", () => {
   it("fixes a doubled host", () => {
@@ -82,5 +82,66 @@ describe("resolveCategoryMeta", () => {
     const html = `<div>nothing useful</div>`;
     const result = resolveCategoryMeta(html, "https://www.pcna.com/en-us/flashlights-lanterns");
     expect(result.categoryId).toBeNull();
+  });
+});
+
+describe("parseProductFragment", () => {
+  it("parses a product block with the anchor nested inside the data-attribute element", () => {
+    const fragment = `
+      <div class="product-card">
+        <div data-sku="SM-9846" data-publishproductid="16572" data-productName="Astro Flashlight"
+             data-category="Flashlights &amp; Lanterns" data-categoryId="339" data-originalPrice="3.78">
+          <a href="https://www.pcna.com/en-us/product/astro-flashlight-sm-9846">View</a>
+        </div>
+      </div>`;
+
+    expect(parseProductFragment(fragment)).toEqual([
+      {
+        sku: "SM-9846",
+        publishProductId: "16572",
+        productName: "Astro Flashlight",
+        category: "Flashlights & Lanterns",
+        categoryId: "339",
+        price: "3.78",
+        productUrl: "https://www.pcna.com/en-us/product/astro-flashlight-sm-9846",
+      },
+    ]);
+  });
+
+  it("falls back to a fragment-wide SKU-suffix match when the anchor isn't nested inside the data block", () => {
+    const fragment = `
+      <div class="product-card">
+        <div data-sku="PC-1234" data-publishproductid="99888" data-productName="Test Widget"
+             data-category="Widgets" data-categoryId="400" data-originalPrice="5.00"></div>
+        <div class="card-footer">
+          <a href="https://www.pcna.com/en-us/product/test-widget-pc-1234">View</a>
+        </div>
+      </div>`;
+
+    const [product] = parseProductFragment(fragment);
+    expect(product.productUrl).toBe("https://www.pcna.com/en-us/product/test-widget-pc-1234");
+  });
+
+  it("parses multiple products in one fragment", () => {
+    const fragment = `
+      <div data-sku="A-1" data-publishproductid="1" data-productName="One" data-category="C" data-categoryId="1" data-originalPrice="1.00">
+        <a href="https://www.pcna.com/en-us/product/one-a-1">View</a>
+      </div>
+      <div data-sku="A-2" data-publishproductid="2" data-productName="Two" data-category="C" data-categoryId="1" data-originalPrice="2.00">
+        <a href="https://www.pcna.com/en-us/product/two-a-2">View</a>
+      </div>`;
+
+    expect(parseProductFragment(fragment).map((p) => p.sku)).toEqual(["A-1", "A-2"]);
+  });
+
+  it("returns an empty productUrl (not a throw) when no matching anchor exists anywhere in the fragment", () => {
+    const fragment = `<div data-sku="NO-URL" data-publishproductid="1" data-productName="No URL" data-category="C" data-categoryId="1" data-originalPrice="1.00"></div>`;
+    const [product] = parseProductFragment(fragment);
+    expect(product.productUrl).toBe("");
+  });
+
+  it("returns an empty array for an exhausted page (no data-sku blocks)", () => {
+    expect(parseProductFragment("")).toEqual([]);
+    expect(parseProductFragment("<div>No more products.</div>")).toEqual([]);
   });
 });

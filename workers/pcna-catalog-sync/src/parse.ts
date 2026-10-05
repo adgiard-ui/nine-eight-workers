@@ -1,4 +1,6 @@
-import { parse as parseHtml } from "node-html-parser";
+import { parse as parseHtml, type HTMLElement } from "node-html-parser";
+import { logger } from "@nine-eight/core/logger";
+import type { Product } from "./types";
 
 const DOUBLED_HOST_PATTERN = /^https:\/\/www\.www\.pcna\.com\//i;
 const GOOD_HOST_PATTERN = /^https:\/\/www\.pcna\.com\//i;
@@ -82,4 +84,64 @@ export function resolveCategoryMeta(
 function deriveCategoryNameFromUrl(categoryUrl: string): string {
   const slug = categoryUrl.split("/").filter(Boolean).pop() ?? "";
   return slug.replace(/[-_]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+/**
+ * Parses one LoadMoreProducts HTML fragment into Product rows. Product
+ * blocks are located by the presence of a data-sku attribute, which the
+ * original spec confirms is always present. See the file-level note above
+ * this function's tests: no raw fragment HTML was available at design
+ * time, so this must be re-validated against a real response.
+ */
+export function parseProductFragment(fragmentHtml: string): Product[] {
+  const root = parseHtml(fragmentHtml);
+  const productNodes = root.querySelectorAll("[data-sku]");
+
+  const products: Product[] = [];
+  for (const node of productNodes) {
+    const sku = node.getAttribute("data-sku");
+    if (!sku) continue;
+
+    products.push({
+      sku: decodeHtmlEntities(sku),
+      publishProductId: decodeHtmlEntities(node.getAttribute("data-publishproductid") ?? ""),
+      productName: decodeHtmlEntities(node.getAttribute("data-productname") ?? ""),
+      category: decodeHtmlEntities(node.getAttribute("data-category") ?? ""),
+      categoryId: decodeHtmlEntities(node.getAttribute("data-categoryid") ?? ""),
+      price: decodeHtmlEntities(node.getAttribute("data-originalprice") ?? ""),
+      productUrl: resolveProductUrl(root, node, sku),
+    });
+  }
+  return products;
+}
+
+/**
+ * node-html-parser's fragments don't expose parentNode (confirmed against
+ * its type definitions), so instead of walking up the tree this: (1)
+ * checks the product block's own subtree first, then (2) falls back to
+ * the one guaranteed link between a product's data block and its
+ * detail-page anchor — PCNA's product URLs end in "-{sku}" (lowercased),
+ * e.g. data-sku="SM-9846" -> .../astro-flashlight-sm-9846. Scans every
+ * /product/ anchor in the whole fragment for one ending in that suffix.
+ * Logs and returns "" (never throws) if neither finds one — one
+ * unresolved URL shouldn't drop the product from the run.
+ */
+function resolveProductUrl(root: HTMLElement, productNode: HTMLElement, sku: string): string {
+  const ownAnchor = productNode.querySelector('a[href*="/product/"]');
+  const ownHref = ownAnchor?.getAttribute("href");
+  if (ownHref) {
+    return ownHref;
+  }
+
+  const suffix = `-${sku.toLowerCase()}`;
+  const candidate = root
+    .querySelectorAll('a[href*="/product/"]')
+    .find((anchor) => (anchor.getAttribute("href") ?? "").toLowerCase().endsWith(suffix));
+  const candidateHref = candidate?.getAttribute("href");
+  if (candidateHref) {
+    return candidateHref;
+  }
+
+  logger.warn("pcna_product_url_unresolved", { sku });
+  return "";
 }
