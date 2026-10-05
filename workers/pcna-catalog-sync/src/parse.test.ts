@@ -144,4 +144,81 @@ describe("parseProductFragment", () => {
     expect(parseProductFragment("")).toEqual([]);
     expect(parseProductFragment("<div>No more products.</div>")).toEqual([]);
   });
+
+  // Fixtures below are trimmed/redacted from a real LoadMoreProducts
+  // response captured 2026-10-05 against https://www.pcna.com (category
+  // 268). Real PCNA markup is a Znode storefront that repeats data-sku
+  // across several elements per product (a hidden checkbox+label, one or
+  // two "compare"/"wishlist" anchors, per-color swatch <li> elements) plus
+  // one per-row price-display wrapper that carries an unrelated, hardcoded
+  // placeholder sku and no other product attributes.
+  it("still excludes the data-sku-only checkbox/label/swatch siblings, keeping only nodes that also carry data-productname (real markup repeats data-sku across several elements per product; crawl.ts's Map.set dedupes the resulting entries by sku, last one wins)", () => {
+    const fragment = `
+      <li class="b2b-products spacer-m" data-redirect="pdp" id="product-tile-2853-01">
+        <article class="product-item">
+          <div class="custom-control custom-checkbox add-to-project-checkbox" style="display: none;">
+            <input type="checkbox" class="custom-control-input is-checked" id="product-2853-01"
+                   data-sku="2853-01" data-publishproductid="53775" data-productName="Blue Tees Captain Pro Rangefinder"
+                   data-category="category-271" data-brand="Blue Tees Golf" data-originalPrice="349.99">
+            <label class="custom-control-label" data-sku="2853-01" for="product-2853-01"></label>
+          </div>
+          <li class="circle active" title="Black">
+            <span data-sku="2853-01" data-variantsku="2853-01BK" data-quantity="12"></span>
+          </li>
+          <li class="wishlisticon btn wishlist-quick-view" data-sku="2853-01" data-publishproductid="53775">
+            <a class="default get-sku"
+               href="https://www.pcna.com/en-us/product/blue-tees-captain-pro-rangefinder-2853-01"
+               data-sku="2853-01"
+               data-publishproductid="53775"
+               data-productName="Blue Tees Captain Pro Rangefinder"
+               data-category="category-271"
+               data-categoryId="268"
+               data-brand="Blue Tees Golf"
+               data-originalPrice="349.99">View</a>
+          </li>
+        </article>
+      </li>`;
+
+    // parseProductFragment itself doesn't dedupe by sku — that's crawl.ts's
+    // job (a Map keyed by sku, set once per entry in document order, last
+    // write wins). The label and swatch <span> above have no
+    // data-productname, so (unlike with the old bare [data-sku] selector)
+    // they never produce entries at all; only the checkbox and the anchor
+    // do, and both already carry fully correct, consistent data.
+    const products = parseProductFragment(fragment);
+    expect(products).toHaveLength(2);
+    for (const product of products) {
+      expect(product.sku).toBe("2853-01");
+      expect(product.productName).toBe("Blue Tees Captain Pro Rangefinder");
+      expect(product.price).toBe("349.99");
+    }
+
+    const deduped = new Map(products.map((p) => [p.sku, p]));
+    expect(deduped.get("2853-01")).toEqual({
+      sku: "2853-01",
+      publishProductId: "53775",
+      productName: "Blue Tees Captain Pro Rangefinder",
+      category: "category-271",
+      categoryId: "268",
+      price: "349.99",
+      productUrl: "https://www.pcna.com/en-us/product/blue-tees-captain-pro-rangefinder-2853-01",
+    });
+  });
+
+  it("does not treat a sku-bearing non-product node (real markup: the price-display wrapper's hardcoded placeholder sku) as its own product", () => {
+    const fragment = `
+      <div data-sku="2853-01" data-publishproductid="53775" data-productName="Blue Tees Captain Pro Rangefinder"
+           data-category="category-271" data-categoryId="268" data-originalPrice="349.99">
+        <a href="https://www.pcna.com/en-us/product/blue-tees-captain-pro-rangefinder-2853-01">View</a>
+      </div>
+      <div class="product-sku-title">2853-01</div>
+      <div data-test-selector="divPrice" class="price" data-sku="10317" data-type="ConfigurableProduct">
+        <span>In Stock</span>
+      </div>`;
+
+    const products = parseProductFragment(fragment);
+    expect(products).toHaveLength(1);
+    expect(products[0].sku).toBe("2853-01");
+    expect(products.find((p) => p.sku === "10317")).toBeUndefined();
+  });
 });

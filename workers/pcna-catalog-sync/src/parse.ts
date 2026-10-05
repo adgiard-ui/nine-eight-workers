@@ -89,13 +89,29 @@ function deriveCategoryNameFromUrl(categoryUrl: string): string {
 /**
  * Parses one LoadMoreProducts HTML fragment into Product rows. Product
  * blocks are located by the presence of a data-sku attribute, which the
- * original spec confirms is always present. See the file-level note above
- * this function's tests: no raw fragment HTML was available at design
- * time, so this must be re-validated against a real response.
+ * original spec confirms is always present.
+ *
+ * Validated against a real LoadMoreProducts response (2026-10-05): PCNA's
+ * actual markup (a Znode storefront) repeats data-sku across *many*
+ * elements per product — a hidden "add to project" checkbox+label, one or
+ * two "compare"/"wishlist" anchors, and per-color swatch <li> elements —
+ * which is harmless since they all carry the same real sku and (for the
+ * ones that carry product data at all) the same values. But the real
+ * response also contains a per-row price-display wrapper
+ * (`<div data-test-selector="divPrice" data-sku="10317"
+ * data-type="ConfigurableProduct">`) carrying a hardcoded placeholder sku
+ * completely unrelated to the product it's displayed inside, and no other
+ * product attributes at all. Selecting on bare [data-sku] treats that
+ * wrapper as its own (fully blank) product. Requiring data-productname
+ * alongside data-sku excludes that wrapper (and the other data-sku-only
+ * elements, which all also lack data-productname) while still matching
+ * every element that actually carries real product data — see the
+ * "doesn't let a sku-bearing non-product node" test below, built from a
+ * trimmed/redacted capture of that real response.
  */
 export function parseProductFragment(fragmentHtml: string): Product[] {
   const root = parseHtml(fragmentHtml);
-  const productNodes = root.querySelectorAll("[data-sku]");
+  const productNodes = root.querySelectorAll("[data-sku][data-productname]");
 
   const products: Product[] = [];
   for (const node of productNodes) {
