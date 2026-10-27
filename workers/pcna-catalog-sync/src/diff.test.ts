@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyProduct, computeSkusToMarkUnseen, hashProduct } from "./diff";
+import { classifyProduct, computeSkusToMarkUnseen, hashProduct, preferSpecificCategory } from "./diff";
 import type { Product, StoredProductRow } from "./types";
 
 const baseProduct: Product = {
@@ -91,5 +91,35 @@ describe("computeSkusToMarkUnseen", () => {
       new Set(["a-sku-1"])
     );
     expect(result).toEqual([]);
+  });
+});
+
+describe("preferSpecificCategory", () => {
+  const observed: Product = {
+    sku: "TM18611",
+    publishProductId: "1",
+    productName: "Vorlage Half-Zip",
+    category: "Apparel",
+    categoryId: "100",
+    price: "40.00",
+    productUrl: "https://www.pcna.com/en-us/product/mens-vorlage-half-zip-knit-jacket-tm18611",
+  };
+  const stored = { category: "Half Zips", categoryId: "210" } as StoredProductRow;
+
+  it("keeps the stored (more specific) category when the observation came from a parent page", () => {
+    expect(preferSpecificCategory(observed, false, stored)).toEqual({ ...observed, category: "Half Zips", categoryId: "210" });
+  });
+
+  it("uses the observed category when it came from a leaf page", () => {
+    expect(preferSpecificCategory(observed, true, stored)).toEqual(observed);
+  });
+
+  it("uses the parent's category for a product with no stored row yet", () => {
+    expect(preferSpecificCategory(observed, false, null)).toEqual(observed);
+  });
+
+  it("still carries the parent observation's other fields (price/name changes are not masked)", () => {
+    const repriced = { ...observed, price: "45.00" };
+    expect(preferSpecificCategory(repriced, false, stored).price).toBe("45.00");
   });
 });

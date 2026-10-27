@@ -22,8 +22,14 @@ bucket_name = "pcna-catalog-sync-csv"
 # config to separate out), these are plain [vars] so they're
 # git-reviewable and editable without a secret rotation.
 [vars]
-SLACK_CHANNEL = "#pcna-catalog-sync"
 MAX_CATEGORIES_PER_RUN = "50"
+# Top-level departments whose category pages (root, parents, leaves —
+# 118 as of 2026-10-16) are crawled. The sitemap also lists products,
+# blog posts, CMS pages, brand pages and collections (deals, clearance,
+# gifts-by-occasion/...), none of which are crawled — see
+# selectCategoryUrls in src/parse.ts. Add a slug here if PCNA launches a
+# new department.
+CATEGORY_PATH_PREFIXES = "apparel,bags,drinkware,home-diy,office,outdoor-sport,technology,food"
 FETCH_DELAY_MS = "500"
 PAGE_SIZE = "200"
 
@@ -32,5 +38,6 @@ PAGE_SIZE = "200"
 #   Local dev:   copy .dev.vars.example to .dev.vars and fill in real values
 #   Production:  wrangler secret put <NAME>   (once per secret, per environment)
 #
-# Required secrets: NANGO_SECRET_KEY, NANGO_CONNECTION_ID, MANUAL_TRIGGER_SECRET.
+# Required secrets: MANUAL_TRIGGER_SECRET.
+# Optional secret: GOOGLE_CHAT_WEBHOOK_URL (unset = no run notifications).
 # Reserved, currently unused by any code path: ANTHROPIC_API_KEY, CLAUDE_MODEL.

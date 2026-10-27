@@ -8,11 +8,12 @@
 export interface Env {
   DB: D1Database;
   CSV_BUCKET: R2Bucket;
-  NANGO_SECRET_KEY: string;
-  NANGO_CONNECTION_ID: string;
+  /** Google Chat incoming-webhook URL (a secret — it embeds key and token). Unset/empty: no notifications. */
+  GOOGLE_CHAT_WEBHOOK_URL?: string;
   MANUAL_TRIGGER_SECRET: string;
-  SLACK_CHANNEL: string;
   MAX_CATEGORIES_PER_RUN: string;
+  /** Comma-separated top-level department slugs whose category pages (root, parents and leaves) are crawled, e.g. "apparel,bags". */
+  CATEGORY_PATH_PREFIXES: string;
   FETCH_DELAY_MS: string;
   PAGE_SIZE: string;
   ANTHROPIC_API_KEY?: string;
@@ -80,6 +81,10 @@ export interface CategoryRef {
 export type CookieJar = Map<string, string>;
 
 export interface RunSummary {
+  /** Unique, normalized URLs across all child sitemaps (before category filtering). */
+  sitemapUrls: number;
+  /** Category URLs (roots, parents and leaves) that survived the CATEGORY_PATH_PREFIXES filter — the rotation's size. */
+  categoriesDiscovered: number;
   categoriesCrawled: number;
   productsSeen: number;
   newCount: number;

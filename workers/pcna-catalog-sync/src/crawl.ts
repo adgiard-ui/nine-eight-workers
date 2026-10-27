@@ -10,9 +10,16 @@ import {
   upsertDiscoveredCategories,
   upsertProducts,
 } from "./db";
-import { classifyProduct, computeSkusToMarkUnseen, hashProduct } from "./diff";
+import { classifyProduct, computeSkusToMarkUnseen, hashProduct, preferSpecificCategory } from "./diff";
 import { createCrawlerFetcher, type CrawlerFetcher } from "./fetch";
-import { extractLocUrls, normalizeUrl, parseProductFragment, resolveCategoryMeta } from "./parse";
+import {
+  extractLocUrls,
+  normalizeUrl,
+  parseCategoryPrefixes,
+  parseProductFragment,
+  resolveCategoryMeta,
+  selectCategoryUrls,
+} from "./parse";
 import type { CookieJar, Env, Product, RunSummary } from "./types";
 
 export async function runCrawl(env: Env): Promise<RunSummary> {
@@ -25,9 +32,11 @@ export async function runCrawl(env: Env): Promise<RunSummary> {
 
   let failedCount = 0;
 
-  // 1. Sitemap walk: index -> 27 child sitemaps -> category URLs.
+  // 1. Sitemap walk: index -> 27 child sitemaps -> every listed URL
+  // (products, blog, CMS pages and categories alike — filtered below).
   const indexXml = await fetcher.fetchSitemapIndex();
-  const categoryUrls = new Set<string>();
+  const sitemapUrls = new Set<string>();
+  let unnormalizableUrlCount = 0;
 
   for (const rawChildUrl of extractLocUrls(indexXml)) {
     const normalizedChild = normalizeUrl(rawChildUrl);
@@ -42,11 +51,15 @@ export async function runCrawl(env: Env): Promise<RunSummary> {
       for (const rawCategoryUrl of extractLocUrls(childXml)) {
         const normalizedCategory = normalizeUrl(rawCategoryUrl);
         if (!normalizedCategory) {
+          // PCNA lists ~28 bare relative paths (e.g. "apparel-decoration"),
+          // all CMS pages as of 2026-10-16. Logged, but not counted in
+          // failedCount — they recur every run and would drown out real
+          // failures in the run summary.
           logger.warn("pcna_category_url_failed_normalization", { url: rawCategoryUrl });
-          failedCount++;
+          unnormalizableUrlCount++;
           continue;
         }
-        categoryUrls.add(normalizedCategory.url);
+        sitemapUrls.add(normalizedCategory.url);
       }
     } catch (error) {
       logger.error("pcna_child_sitemap_failed", { url: normalizedChild.url, error: String(error) });
@@ -54,13 +67,34 @@ export async function runCrawl(env: Env): Promise<RunSummary> {
     }
   }
 
-  await upsertDiscoveredCategories(env.DB, [...categoryUrls]);
+  // 2. Keep only department category pages (see selectCategoryUrls).
+  const categoryPrefixes = parseCategoryPrefixes(env.CATEGORY_PATH_PREFIXES);
+  const selectedCategories = selectCategoryUrls([...sitemapUrls], categoryPrefixes);
+  const categoryUrls = selectedCategories.map((category) => category.url);
+  const leafCategoryUrls = new Set(selectedCategories.filter((category) => category.isLeaf).map((category) => category.url));
+  logger.info("pcna_sitemap_filtered", {
+    sitemapUrls: sitemapUrls.size,
+    unnormalizableUrls: unnormalizableUrlCount,
+    categoriesDiscovered: categoryUrls.length,
+    prefixes: categoryPrefixes,
+  });
+  if (categoryUrls.length === 0) {
+    // Fail loudly (runAndNotify posts it to Google Chat) rather than report a
+    // "successful" run that crawled nothing — an unset/typo'd
+    // CATEGORY_PATH_PREFIXES or a PCNA URL restructure both land here.
+    throw new Error(
+      `No sitemap URLs matched CATEGORY_PATH_PREFIXES (${categoryPrefixes.join(",") || "unset"}) out of ${sitemapUrls.size} sitemap URLs`
+    );
+  }
 
-  // 2. Pick this run's slice: least-recently-crawled first, capped.
+  await upsertDiscoveredCategories(env.DB, categoryUrls);
+
+  // 3. Pick this run's slice: least-recently-crawled first, capped.
   const maxCategories = Number(env.MAX_CATEGORIES_PER_RUN) || 50;
-  const categoriesToCrawl = await getCategoriesToCrawl(env.DB, maxCategories);
+  const categoriesToCrawl = await getCategoriesToCrawl(env.DB, maxCategories, new Set(categoryUrls));
 
   const observedProducts = new Map<string, Product>();
+  const skusSeenOnLeafPage = new Set<string>();
   const crawledCategoryIds = new Set<string>();
   const now = new Date().toISOString();
 
@@ -80,15 +114,27 @@ export async function runCrawl(env: Env): Promise<RunSummary> {
         categoryId: meta.categoryId,
         categoryName: meta.categoryName,
       });
+      const isLeaf = leafCategoryUrls.has(category.categoryUrl);
       for (const product of products) {
+        // A parent page lists its children's products too; don't let it
+        // overwrite a leaf observation from earlier in this same run.
+        if (!isLeaf && skusSeenOnLeafPage.has(product.sku)) {
+          continue;
+        }
+        if (isLeaf) {
+          skusSeenOnLeafPage.add(product.sku);
+        }
         // Stamp the category actually being crawled onto every observed
         // product rather than trusting whichever data-categoryId/data-category
         // happened to land on the winning (last-in-document-order) matching
         // element — real PCNA markup doesn't guarantee every element
         // matching [data-sku][data-productname] carries the same attributes.
-        // This makes "every stored category_id is one of crawledCategoryIds"
-        // true by construction, which is the invariant discontinuation
-        // scoping depends on.
+        // This makes "every observed product's category_id is one this run
+        // crawled" true by construction, which discontinuation scoping
+        // depends on. The one exception is deliberate: a parent-page
+        // observation of an already-stored product keeps its stored leaf
+        // category (preferSpecificCategory, at diff time) — that product
+        // is in observedProducts, so it's never wrongly marked unseen.
         observedProducts.set(product.sku, {
           ...product,
           categoryId: meta.categoryId,
@@ -122,9 +168,11 @@ export async function runCrawl(env: Env): Promise<RunSummary> {
   let newCount = 0;
   let changedCount = 0;
 
-  for (const product of observedProducts.values()) {
+  for (const observed of observedProducts.values()) {
+    const stored = storedBySku.get(observed.sku) ?? null;
+    const product = preferSpecificCategory(observed, skusSeenOnLeafPage.has(observed.sku), stored);
     const dataHash = await hashProduct(product);
-    const status = classifyProduct(storedBySku.get(product.sku) ?? null, dataHash);
+    const status = classifyProduct(stored, dataHash);
 
     if (status === "NEW") newCount++;
     if (status === "CHANGED") changedCount++;
@@ -150,6 +198,8 @@ export async function runCrawl(env: Env): Promise<RunSummary> {
   }
 
   const summary: RunSummary = {
+    sitemapUrls: sitemapUrls.size,
+    categoriesDiscovered: categoryUrls.length,
     categoriesCrawled: crawledCategoryIds.size,
     productsSeen: observedProducts.size,
     newCount,

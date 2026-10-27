@@ -16,7 +16,7 @@ const product: Product = {
 describe("buildCsv", () => {
   it("writes a header row matching PRODUCT_FIELDS order", () => {
     const [header] = buildCsv([product]).split("\r\n");
-    expect(header).toBe(PRODUCT_FIELDS.join(","));
+    expect(header).toBe("﻿" + PRODUCT_FIELDS.join(","));
   });
 
   it("writes one row per product, in PRODUCT_FIELDS order", () => {
@@ -33,6 +33,12 @@ describe("buildCsv", () => {
   });
 
   it("produces only the header plus a trailing CRLF for an empty row list", () => {
-    expect(buildCsv([])).toBe(PRODUCT_FIELDS.join(",") + "\r\n");
+    expect(buildCsv([])).toBe("﻿" + PRODUCT_FIELDS.join(",") + "\r\n");
+  });
+
+  it("starts with a UTF-8 byte-order mark so Excel decodes non-ASCII text (e.g. the trademark symbol) correctly", () => {
+    const csv = buildCsv([{ ...product, productName: "Astro™ Flashlight" }]);
+    expect(csv.charCodeAt(0)).toBe(0xfeff);
+    expect(new TextEncoder().encode(csv).slice(0, 3)).toEqual(new Uint8Array([0xef, 0xbb, 0xbf]));
   });
 });

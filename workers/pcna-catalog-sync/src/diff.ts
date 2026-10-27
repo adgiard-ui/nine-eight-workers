@@ -40,3 +40,20 @@ export function computeSkusToMarkUnseen(
   }
   return toMarkUnseen;
 }
+
+/**
+ * Products appear on both a leaf category page and its parents, and
+ * dedup-by-SKU is last-write-wins. An observation from a parent page
+ * (isLeaf false) therefore never overrides a category the product already
+ * has — otherwise rotation would flip it between "Half Zips" and
+ * "Apparel" and report it CHANGED each time. A product seen only on a
+ * parent page (no stored row) takes the parent's category. Only
+ * category/categoryId are preserved; price, name and URL changes still
+ * come through.
+ */
+export function preferSpecificCategory(observed: Product, fromLeaf: boolean, stored: StoredProductRow | null): Product {
+  if (fromLeaf || !stored) {
+    return observed;
+  }
+  return { ...observed, category: stored.category, categoryId: stored.categoryId };
+}

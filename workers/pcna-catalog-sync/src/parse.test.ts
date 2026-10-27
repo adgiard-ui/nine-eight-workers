@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { decodeHtmlEntities, extractLocUrls, normalizeUrl, resolveCategoryMeta, parseProductFragment } from "./parse";
+import {
+  decodeHtmlEntities,
+  extractLocUrls,
+  normalizeUrl,
+  parseCategoryPrefixes,
+  parseProductFragment,
+  resolveCategoryMeta,
+  selectCategoryUrls,
+} from "./parse";
 
 describe("normalizeUrl", () => {
   it("fixes a doubled host", () => {
@@ -86,6 +94,24 @@ describe("resolveCategoryMeta", () => {
     const html = `<div>nothing useful</div>`;
     const result = resolveCategoryMeta(html, "https://www.pcna.com/en-us/flashlights-lanterns");
     expect(result.categoryId).toBeNull();
+  });
+
+  it("ignores decoy data-category/data-categoryId elements that precede the real #layout-category element", () => {
+    // Trimmed from the real /en-us/bags page (2026-10-27): every category
+    // page carries per-department promo banners (data-category="category-271"
+    // etc., Apparel first) and data-categoryId="0" placeholders before the
+    // element that actually describes the page.
+    const html = `
+      <div class="ad-banner-details category-271" data-category="category-271"></div>
+      <div class="shopByPrice category-271" data-category="category-271"></div>
+      <input type="hidden" data-categoryId="0" data-category="" />
+      <div class="ad-banner-details category-272" data-category="category-272"></div>
+      <div id="layout-category" data-category="Bags" data-categoryId="272" class="col"></div>
+      <div data-sku="1234" data-productname="Tote" data-category="Bags" data-categoryId="272"></div>`;
+    expect(resolveCategoryMeta(html, "https://www.pcna.com/en-us/bags")).toEqual({
+      categoryId: "272",
+      categoryName: "Bags",
+    });
   });
 
   it("falls through to the regex fallback when data-categoryid is present but empty", () => {
@@ -230,5 +256,67 @@ describe("parseProductFragment", () => {
     expect(products).toHaveLength(1);
     expect(products[0].sku).toBe("2853-01");
     expect(products.find((p) => p.sku === "10317")).toBeUndefined();
+  });
+});
+
+describe("selectCategoryUrls", () => {
+  const base = "https://www.pcna.com/en-us/";
+  const prefixes = ["apparel", "bags"];
+  const urlsOf = (selected: { url: string }[]) => selected.map((category) => category.url);
+
+  it("keeps only URLs under an allowlisted department prefix", () => {
+    const urls = [
+      `${base}apparel/polos`,
+      `${base}bags/duffels`,
+      `${base}product/wolverine-23l-laptop-backpack-1883-05`,
+      `${base}blog/article/anatomy-of-the-perfect-winter-jacket`,
+      `${base}brand/stanley`,
+      `${base}clearance`,
+      `${base}gifts-by-occasion/employee-onboarding`,
+      `${base}apparel-decoration`,
+    ];
+    expect(urlsOf(selectCategoryUrls(urls, prefixes))).toEqual([`${base}apparel/polos`, `${base}bags/duffels`]);
+  });
+
+  it("keeps department roots and parents (the sitemap doesn't list every child), flagging only childless ones as leaves", () => {
+    const urls = [
+      `${base}apparel`,
+      `${base}apparel/hoodies-fleece/hoodies-sweatshirts`,
+      `${base}apparel/hoodies-fleece/hoodies-sweatshirts/quarter-zips`,
+      `${base}apparel/polos`,
+    ];
+    expect(selectCategoryUrls(urls, prefixes)).toEqual([
+      { url: `${base}apparel`, isLeaf: false },
+      { url: `${base}apparel/hoodies-fleece/hoodies-sweatshirts`, isLeaf: false },
+      { url: `${base}apparel/hoodies-fleece/hoodies-sweatshirts/quarter-zips`, isLeaf: true },
+      { url: `${base}apparel/polos`, isLeaf: true },
+    ]);
+  });
+
+  it("matches whole path segments, not string prefixes", () => {
+    const urls = [`${base}bags-pcna`, `${base}apparel/t-shirts`, `${base}apparel/t-shirts-extra`];
+    expect(selectCategoryUrls(urls, prefixes)).toEqual([
+      { url: `${base}apparel/t-shirts`, isLeaf: true },
+      { url: `${base}apparel/t-shirts-extra`, isLeaf: true },
+    ]);
+  });
+
+  it("is case-insensitive on the prefix, ignores a trailing slash, and dedupes", () => {
+    const urls = [`${base}Apparel/Polos/`, `${base}apparel/polos`];
+    expect(urlsOf(selectCategoryUrls(urls, prefixes))).toEqual([`${base}Apparel/Polos/`]);
+  });
+
+  it("returns nothing for an empty allowlist rather than everything", () => {
+    expect(selectCategoryUrls([`${base}apparel/polos`], [])).toEqual([]);
+  });
+});
+
+describe("parseCategoryPrefixes", () => {
+  it("splits a comma-separated list, trimming whitespace and slashes and dropping empties", () => {
+    expect(parseCategoryPrefixes(" apparel, /bags/ ,,Drinkware ")).toEqual(["apparel", "bags", "drinkware"]);
+  });
+
+  it("returns an empty list for an unset value", () => {
+    expect(parseCategoryPrefixes(undefined)).toEqual([]);
   });
 });

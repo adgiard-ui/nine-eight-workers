@@ -1,5 +1,6 @@
-NANGO_SECRET_KEY=your-nango-secret-key-here
-NANGO_CONNECTION_ID=your-nango-slack-connection-id-here
+# Google Chat incoming webhook for run summaries/failures. Leave it out
+# (or empty) to skip notifications, e.g. for local test runs.
+GOOGLE_CHAT_WEBHOOK_URL=https://chat.googleapis.com/v1/spaces/.../messages?key=...&token=...
 MANUAL_TRIGGER_SECRET=choose-a-long-random-string-here
 
 # Reserved for a future Claude-based extraction step. Nothing in this

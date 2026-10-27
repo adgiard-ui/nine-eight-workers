@@ -1,6 +1,7 @@
 import { logger } from "@nine-eight/core/logger";
+import { secretsMatch } from "./auth";
 import { runCrawl } from "./crawl";
-import { postRunFailureToSlack, postRunSummaryToSlack } from "./slack";
+import { postRunFailure, postRunSummary } from "./notify";
 import type { Env, RunSummary } from "./types";
 
 export type { Env };
@@ -8,10 +9,10 @@ export type { Env };
 async function runAndNotify(env: Env): Promise<RunSummary> {
   try {
     const summary = await runCrawl(env);
-    await postRunSummaryToSlack(env, summary);
+    await postRunSummary(env, summary);
     return summary;
   } catch (error) {
-    await postRunFailureToSlack(env, error);
+    await postRunFailure(env, error);
     throw error;
   }
 }
@@ -37,14 +38,15 @@ export default {
       return jsonResponse({ error: "Only POST requests are supported." }, 405);
     }
 
-    const providedSecret = request.headers.get("X-Trigger-Secret");
-    if (!env.MANUAL_TRIGGER_SECRET || providedSecret !== env.MANUAL_TRIGGER_SECRET) {
+    if (!(await secretsMatch(request.headers.get("X-Trigger-Secret"), env.MANUAL_TRIGGER_SECRET))) {
       return jsonResponse({ error: "Missing or invalid X-Trigger-Secret header." }, 403);
     }
 
     // Default: synchronous, for small MAX_CATEGORIES_PER_RUN validation
-    // runs. ?async=true: fire-and-forget via waitUntil, for a full-catalog
-    // manual run that would otherwise exceed the HTTP response timeout.
+    // runs. ?async=true: fire-and-forget via waitUntil, which Cloudflare
+    // cuts off 30s after the response is sent — so this is only for runs
+    // that finish within ~30s, NOT a full rotation slice. For a full
+    // off-schedule run, fire the scheduled handler instead (README).
     const isAsync = new URL(request.url).searchParams.get("async") === "true";
 
     if (isAsync) {

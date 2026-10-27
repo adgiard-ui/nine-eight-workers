@@ -140,22 +140,34 @@ export async function upsertDiscoveredCategories(db: D1Database, categoryUrls: s
   }
 }
 
-export async function getCategoriesToCrawl(db: D1Database, limit: number): Promise<CategoryRef[]> {
+/**
+ * Picks this run's slice, least-recently-crawled first, restricted to
+ * `eligibleUrls` (this run's filtered sitemap). Rows are never deleted,
+ * so the table can hold URLs that are no longer eligible — ones that
+ * dropped out of the sitemap, or that an older/broader filter let in —
+ * and those must not take rotation slots. Filtering in JS rather than an
+ * IN (...) clause sidesteps D1's per-statement parameter limit; the
+ * table is a few hundred rows at most.
+ */
+export async function getCategoriesToCrawl(
+  db: D1Database,
+  limit: number,
+  eligibleUrls: ReadonlySet<string>
+): Promise<CategoryRef[]> {
   const { results } = await db
     .prepare(
       `SELECT category_url, category_id, category_name FROM categories
-       ORDER BY (last_crawled_at IS NOT NULL) ASC, last_crawled_at ASC
-       LIMIT ?`
+       ORDER BY (last_crawled_at IS NOT NULL) ASC, last_crawled_at ASC`
     )
-    .bind(limit)
     .all();
-  return (results as { category_url: string; category_id: string | null; category_name: string | null }[]).map(
-    (row) => ({
+  return (results as { category_url: string; category_id: string | null; category_name: string | null }[])
+    .filter((row) => eligibleUrls.has(row.category_url))
+    .slice(0, limit)
+    .map((row) => ({
       categoryUrl: row.category_url,
       categoryId: row.category_id ?? "",
       categoryName: row.category_name ?? "",
-    })
-  );
+    }));
 }
 
 export async function markCategoryCrawled(

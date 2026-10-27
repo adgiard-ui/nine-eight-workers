@@ -74,11 +74,25 @@ export function resolveCategoryMeta(
 ): { categoryId: string | null; categoryName: string } {
   const root = parseHtml(categoryPageHtml);
 
-  const categoryIdAttr = root.querySelector("[data-categoryid]")?.getAttribute("data-categoryid");
+  // Read both values from the one element that describes this page.
+  // Validated against the real site (2026-10-27): every category page
+  // carries per-department promo banners (data-category="category-271",
+  // Apparel first, ...) and data-categoryId="0" placeholders *before* the
+  // real <div id="layout-category" data-category="Bags" data-categoryId="272">.
+  // Taking the first [data-category] stamped "category-271" onto every
+  // product. Same lesson as the data-sku decoy in parseProductFragment:
+  // never trust the first element that merely carries the attribute.
+  const pageElement =
+    root.querySelector("#layout-category") ??
+    root
+      .querySelectorAll("[data-category][data-categoryid]")
+      .find((el) => /^[1-9]\d*$/.test(el.getAttribute("data-categoryid") ?? ""));
+
+  const categoryIdAttr = pageElement?.getAttribute("data-categoryid");
   const fallbackMatch = categoryPageHtml.match(/categoryId["']?\s*[:=]\s*["']?(\d+)/i);
   const categoryId = categoryIdAttr || fallbackMatch?.[1] || null;
 
-  const categoryNameAttr = root.querySelector("[data-category]")?.getAttribute("data-category");
+  const categoryNameAttr = pageElement?.getAttribute("data-category");
   const categoryName = categoryNameAttr ? decodeHtmlEntities(categoryNameAttr) : deriveCategoryNameFromUrl(categoryUrl);
 
   return { categoryId, categoryName };
@@ -163,4 +177,54 @@ function resolveProductUrl(root: HTMLElement, productNode: HTMLElement, sku: str
 
   logger.warn("pcna_product_url_unresolved", { sku });
   return "";
+}
+
+/** Parses CATEGORY_PATH_PREFIXES ("apparel,bags,...") into lowercase top-level path segments. */
+export function parseCategoryPrefixes(raw: string | undefined): string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((prefix) => prefix.trim().replace(/^\/+|\/+$/g, "").toLowerCase())
+    .filter(Boolean);
+}
+
+/**
+ * PCNA's sitemaps aren't a category list — of ~2,600 URLs, ~2,000 are
+ * product pages, ~170 blog posts, and ~230 CMS/marketing/brand pages.
+ * Without this filter every one of those took a rotation slot, turning a
+ * full rotation into ~a year and inflating failedCount on every run.
+ *
+ * Keeps URLs under an allowlisted department (whole-segment match, below
+ * /en-us/), including the department root. Collection and campaign pages
+ * (deals, clearance, gifts-by-occasion/...) are excluded: their products
+ * all live in a department too, and crawling them would stamp "Clearance"
+ * onto products as their category.
+ *
+ * Parents are kept, not just leaves, because the sitemap lists only some
+ * children (e.g. drinkware/tumblers lists only tumblers-with-straws) —
+ * dropping parents would silently lose products. `isLeaf` lets the
+ * crawler keep a product's most specific category instead of flipping it
+ * to the parent's (see preferSpecificCategory in diff.ts).
+ *
+ * Order-preserving; dedupes case/trailing-slash variants (first wins).
+ */
+export function selectCategoryUrls(urls: string[], prefixes: string[]): { url: string; isLeaf: boolean }[] {
+  const allowed = new Set(prefixes.map((prefix) => prefix.toLowerCase()));
+  const candidates = new Map<string, string>();
+
+  for (const url of urls) {
+    const segments = new URL(url).pathname.toLowerCase().split("/").filter(Boolean);
+    if (segments[0] !== "en-us" || segments.length < 2 || !allowed.has(segments[1])) {
+      continue;
+    }
+    const pathKey = segments.slice(1).join("/");
+    if (!candidates.has(pathKey)) {
+      candidates.set(pathKey, url);
+    }
+  }
+
+  const pathKeys = [...candidates.keys()];
+  return pathKeys.map((pathKey) => ({
+    url: candidates.get(pathKey)!,
+    isLeaf: !pathKeys.some((other) => other.startsWith(`${pathKey}/`)),
+  }));
 }
