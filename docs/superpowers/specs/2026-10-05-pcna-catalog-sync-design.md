@@ -285,3 +285,33 @@ this run's observation wins (last-write-wins on `category`/`category_id`).
   `MANUAL_TRIGGER_SECRET`.
 - Set `SLACK_CHANNEL`, `MAX_CATEGORIES_PER_RUN`, `FETCH_DELAY_MS`,
   `PAGE_SIZE` as vars (or secrets, if preferred) per environment.
+
+## Post-implementation changes (added 2026-10-27)
+
+This doc is the 2026-10-05 design as approved; it is left as written. The
+following changed after implementation — the worker README is the
+current reference.
+
+- **Sitemap → categories is filtered** (2026-10-16). The sitemap is not
+  a category list: of ~2,600 URLs, only 118 are department category
+  pages. Flow step 2 and `parse.ts` now keep only URLs under an allowlisted
+  department (`CATEGORY_PATH_PREFIXES` in `wrangler.toml`), roots and
+  parents included. Re-verified against the live site 2026-10-27
+  (94 leaves + 24 parents/roots); at `MAX_CATEGORIES_PER_RUN = 50`, a full
+  rotation takes 3 weekly runs.
+- **Category reassignment is no longer pure last-write-wins** (design
+  addition 3). A product seen only on a parent page keeps its stored,
+  more specific leaf category; only a leaf-page sighting can change it.
+- **Rotation query** (`db.ts`): ordering is unchanged, but the cap and the
+  "still in this run's filtered sitemap" check are applied in JS rather
+  than via `LIMIT`, so stale `categories` rows never take rotation slots.
+- **`?async=true` cannot run a full-catalog slice** (design addition 4).
+  Cloudflare stops `waitUntil` work 30 seconds after the response is sent;
+  a full run must go through the scheduled handler (15-minute limit).
+- **Notifications go to Google Chat, not Slack** (2026-10-27). `slack.ts`
+  (Slack via Nango) is replaced by `notify.ts`, which posts to a Google
+  Chat incoming webhook (`GOOGLE_CHAT_WEBHOOK_URL` secret). The Nango
+  secrets and `SLACK_CHANNEL` are gone; an unset webhook means no
+  notifications.
+- Also added: UTF-8 BOM on the CSV, `sitemapUrls`/`categoriesDiscovered`
+  in the run summary, constant-time trigger-secret comparison.

@@ -88,24 +88,28 @@ First worker with real code-level guardrails beyond the happy path: no auto-retr
 Internal pipeline tooling — phase one of a pipeline that will eventually feed NetSuite.
 
 ## Process it runs
-Crawls PCNA's public product catalog on a schedule (27 sitemaps -> category pages -> paginated product listings), deduplicates by SKU, diffs against a D1 snapshot, writes NEW/CHANGED rows to a CSV in R2, and posts a Slack summary. Deterministic data processing — no agent loop; ANTHROPIC_API_KEY/CLAUDE_MODEL are reserved for a future Claude-based extraction step and unused by any current code path.
+Crawls PCNA's public product catalog on a schedule (27 sitemaps -> ~2,600 URLs, filtered by `CATEGORY_PATH_PREFIXES` down to 118 department category pages -> paginated product listings), deduplicates by SKU, diffs against a D1 snapshot, writes NEW/CHANGED rows to a CSV in R2, and posts a Google Chat summary. Deterministic data processing — no agent loop; ANTHROPIC_API_KEY/CLAUDE_MODEL are reserved for a future Claude-based extraction step and unused by any current code path.
 
 ## Trigger
-Weekly Cloudflare Cron Trigger (Monday 10am Eastern), plus a POST endpoint for manual runs (synchronous by default, `?async=true` for a full-catalog run), gated by a shared `X-Trigger-Secret` header.
+Weekly Cloudflare Cron Trigger (Monday 10am Eastern), plus a POST endpoint for manual runs (synchronous by default; `?async=true` returns 202 immediately but is cut off 30s after responding, so it's for small runs only — see the worker README), gated by a shared `X-Trigger-Secret` header.
 
 ## Tools it uses
 - fetch.ts (direct, unauthenticated requests to pcna.com — cookie jar, configurable delay, browser User-Agent)
-- post_run_summary_to_slack (via Nango proxy to Slack's chat.postMessage)
+- notify.ts (run summary / failure message to a Google Chat incoming webhook)
 
 ## Integrations
 - PCNA public catalog (direct HTTP, no auth yet — isolated in fetch.ts so dealer-auth or a PromoStandards API swap only touches that file)
-- Slack, via Nango (Provider-Config-Key: slack)
+- Google Chat, via an incoming webhook (`GOOGLE_CHAT_WEBHOOK_URL` secret; unset = no notifications)
 
 ## Deployment URL
 Not yet deployed to production. Validated end-to-end against the real live PCNA site via local `wrangler dev` (815 real products seen in a 2-category smoke run; correctly classified as NEW on first run, UNCHANGED on a repeat run). Production deploy pending manual D1/R2/secret setup (see the worker's README checklist).
 
 ## Retainer notes
-First worker in this repo using D1, R2, and Cron Triggers. First worker with an automated unit test suite (Vitest, scoped to this worker's pure logic only — parsing, hashing/classification, CSV, fetch module cookie-jar/delay behavior). Discontinuation detection (`seen_in_last_run`) is deliberately scoped to categories actually crawled in a given run, not the whole catalog — `MAX_CATEGORIES_PER_RUN` caps per-run coverage and rotates least-recently-crawled-first, so most categories aren't visited on any single run. Two real-world gotchas found and fixed during live validation: (1) PCNA's product-listing fragment carries a per-row price-wrapper element with a hardcoded placeholder `data-sku`, with no other product attributes — the parser now requires `data-productname` alongside `data-sku` to exclude it; (2) PCNA signals "no more pages" with an HTTP 500 on the first overrun page, not an empty 200 — see ARCHITECTURE.md's decisions log.
+First worker in this repo using D1, R2, and Cron Triggers. First worker with an automated unit test suite (Vitest, scoped to this worker's pure logic only — parsing, hashing/classification, CSV, fetch module cookie-jar/delay behavior). Discontinuation detection (`seen_in_last_run`) is deliberately scoped to categories actually crawled in a given run, not the whole catalog — `MAX_CATEGORIES_PER_RUN` caps per-run coverage and rotates least-recently-crawled-first, so most categories aren't visited on any single run. Two real-world gotchas found and fixed during live validation: (1) PCNA's product-listing fragment carries a per-row price-wrapper element with a hardcoded placeholder `data-sku`, with no other product attributes — the parser now requires `data-productname` alongside `data-sku` to exclude it; (2) PCNA signals "no more pages" with an HTTP 500 on the first overrun page, not an empty 200 — see ARCHITECTURE.md's decisions log. A third, found after the first build: PCNA's sitemap is mostly not categories (see the 2026-10-16 decisions log entry). Requires Workers Paid (the Free plan's 50-subrequest and 10 ms CPU caps can't run it); hosting may move to a different Cloudflare account or AWS, so re-check limits on any move.
 
 ## Change log
 2026-10-05: Scaffolded per the design doc (`docs/superpowers/specs/2026-10-05-pcna-catalog-sync-design.md`) and implementation plan (`docs/superpowers/plans/2026-10-05-pcna-catalog-sync.md`); validated end-to-end against the real PCNA site, including two real-world fixes to the parser and pagination-termination logic.
+2026-10-16: Sitemap filtered to department category pages via `CATEGORY_PATH_PREFIXES` (118 of ~2,600 URLs); parent-page observations no longer overwrite a product's more specific leaf category; UTF-8 BOM on the CSV; `sitemapUrls`/`categoriesDiscovered` added to the run summary and notification message; constant-time manual-trigger secret check (`auth.ts`). 62 unit tests.
+2026-10-27: Re-verified the 118 category count against the live sitemap (94 leaves + 24 parents/roots); `MAX_CATEGORIES_PER_RUN` stays at 50 (full rotation every 3 weekly runs).
+2026-10-27: Notifications moved from Slack (via Nango) to a Google Chat incoming webhook; Nango secrets and `SLACK_CHANNEL` removed. Unset webhook = no notifications (used for local test runs).
+2026-10-27: Local batch test against the live site (3 runs x 5 categories, then 1 x 2): sitemap filter, crawl, D1 writes, BOM'd delta CSV, rotation and CHANGED detection all verified. Found and fixed a decoy-element bug: category pages carry per-department promo banners (`data-category="category-271"`, ...) and `data-categoryId="0"` placeholders before the real `#layout-category` element, so every product was stored with category "category-271"; `resolveCategoryMeta` now reads both values from that element.
