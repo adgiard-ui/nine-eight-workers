@@ -42,18 +42,44 @@ export function computeSkusToMarkUnseen(
 }
 
 /**
- * Products appear on both a leaf category page and its parents, and
- * dedup-by-SKU is last-write-wins. An observation from a parent page
- * (isLeaf false) therefore never overrides a category the product already
- * has — otherwise rotation would flip it between "Half Zips" and
- * "Apparel" and report it CHANGED each time. A product seen only on a
- * parent page (no stored row) takes the parent's category. Only
- * category/categoryId are preserved; price, name and URL changes still
- * come through.
+ * Products appear on a category page and on every ancestor page above it,
+ * so "which category is this product in" means the most specific one:
+ * the deepest category URL (see categoryDepth in parse.ts). Rotation
+ * visits a product's categories in varying orders across runs, so this
+ * decides at diff time whether an observation may replace the stored
+ * category:
+ *
+ * - A deeper observation always wins (stored under "Drinkware", seen on
+ *   "drinkware/tumblers" — even though tumblers is a non-leaf in the
+ *   sitemap).
+ * - A shallower or equally deep observation keeps the stored category,
+ *   so rotation doesn't flip a product between a parent and its child,
+ *   or between two sibling categories, and report it CHANGED each time.
+ * - Except when the stored category was itself fully re-crawled this run
+ *   (storedCategoryRecrawled) and the product wasn't seen there — it
+ *   moved, so the observation wins.
+ * - Unknown stored depth (no stored row, or a category that isn't one of
+ *   the crawled department pages) lets the observation win.
+ *
+ * Only category/categoryId are preserved; price, name and URL changes
+ * still come through.
  */
-export function preferSpecificCategory(observed: Product, fromLeaf: boolean, stored: StoredProductRow | null): Product {
-  if (fromLeaf || !stored) {
-    return observed;
-  }
-  return { ...observed, category: stored.category, categoryId: stored.categoryId };
+export function preferSpecificCategory(
+  observed: Product,
+  observedDepth: number,
+  stored: StoredProductRow | null,
+  storedDepth: number | null,
+  storedCategoryRecrawled: boolean
+): Product {
+  const keepStored = stored !== null && storedDepth !== null && !storedCategoryRecrawled && storedDepth >= observedDepth;
+  return keepStored ? { ...observed, category: stored.category, categoryId: stored.categoryId } : observed;
+}
+
+/**
+ * In-run dedup: a SKU seen on several category pages in one run keeps its
+ * deepest observation, whatever order the pages were crawled in; ties keep
+ * the first.
+ */
+export function isMoreSpecificObservation(existingDepth: number | undefined, newDepth: number): boolean {
+  return existingDepth === undefined || newDepth > existingDepth;
 }

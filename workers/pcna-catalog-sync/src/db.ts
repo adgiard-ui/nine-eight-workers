@@ -191,6 +191,14 @@ export async function markCategoryCrawled(
  * getCategoriesToCrawl) and permanently occupy a slot in every future
  * run's MAX_CATEGORIES_PER_RUN-capped rotation.
  */
+/** category_id -> category_url for every category whose ID has been resolved (used to rank a stored product's category by depth). */
+export async function getCategoryUrlsById(db: D1Database): Promise<Map<string, string>> {
+  const { results } = await db
+    .prepare("SELECT category_id, category_url FROM categories WHERE category_id IS NOT NULL AND category_id != ''")
+    .all();
+  return new Map((results as { category_id: string; category_url: string }[]).map((row) => [row.category_id, row.category_url]));
+}
+
 export async function markCategoryAttempted(db: D1Database, categoryUrl: string, attemptedAt: string): Promise<void> {
   await db.prepare(`UPDATE categories SET last_crawled_at = ? WHERE category_url = ?`).bind(attemptedAt, categoryUrl).run();
 }

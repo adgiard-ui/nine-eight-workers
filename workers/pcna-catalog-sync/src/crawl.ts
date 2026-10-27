@@ -2,6 +2,7 @@ import { logger } from "@nine-eight/core/logger";
 import { buildCsv } from "./csv";
 import {
   getCategoriesToCrawl,
+  getCategoryUrlsById,
   getStoredProductsBySkus,
   getStoredSkusByCategoryIds,
   markCategoryAttempted,
@@ -10,9 +11,10 @@ import {
   upsertDiscoveredCategories,
   upsertProducts,
 } from "./db";
-import { classifyProduct, computeSkusToMarkUnseen, hashProduct, preferSpecificCategory } from "./diff";
+import { classifyProduct, computeSkusToMarkUnseen, hashProduct, isMoreSpecificObservation, preferSpecificCategory } from "./diff";
 import { createCrawlerFetcher, type CrawlerFetcher } from "./fetch";
 import {
+  categoryDepth,
   extractLocUrls,
   normalizeUrl,
   parseCategoryPrefixes,
@@ -71,13 +73,17 @@ export async function runCrawl(env: Env): Promise<RunSummary> {
   const categoryPrefixes = parseCategoryPrefixes(env.CATEGORY_PATH_PREFIXES);
   const selectedCategories = selectCategoryUrls([...sitemapUrls], categoryPrefixes);
   const categoryUrls = selectedCategories.map((category) => category.url);
-  const leafCategoryUrls = new Set(selectedCategories.filter((category) => category.isLeaf).map((category) => category.url));
   logger.info("pcna_sitemap_filtered", {
     sitemapUrls: sitemapUrls.size,
     unnormalizableUrls: unnormalizableUrlCount,
     categoriesDiscovered: categoryUrls.length,
     prefixes: categoryPrefixes,
   });
+  if (sitemapUrls.size === 0) {
+    // Every child sitemap failed (or the index listed none) — say so,
+    // rather than blaming CATEGORY_PATH_PREFIXES below.
+    throw new Error(`No URLs read from PCNA's sitemaps (${failedCount} sitemap fetch failures) — is pcna.com down or blocking?`);
+  }
   if (categoryUrls.length === 0) {
     // Fail loudly (runAndNotify posts it to Google Chat) rather than report a
     // "successful" run that crawled nothing — an unset/typo'd
@@ -94,7 +100,7 @@ export async function runCrawl(env: Env): Promise<RunSummary> {
   const categoriesToCrawl = await getCategoriesToCrawl(env.DB, maxCategories, new Set(categoryUrls));
 
   const observedProducts = new Map<string, Product>();
-  const skusSeenOnLeafPage = new Set<string>();
+  const observedDepthBySku = new Map<string, number>();
   const crawledCategoryIds = new Set<string>();
   const now = new Date().toISOString();
 
@@ -114,16 +120,14 @@ export async function runCrawl(env: Env): Promise<RunSummary> {
         categoryId: meta.categoryId,
         categoryName: meta.categoryName,
       });
-      const isLeaf = leafCategoryUrls.has(category.categoryUrl);
+      const depth = categoryDepth(category.categoryUrl);
       for (const product of products) {
-        // A parent page lists its children's products too; don't let it
-        // overwrite a leaf observation from earlier in this same run.
-        if (!isLeaf && skusSeenOnLeafPage.has(product.sku)) {
+        // A parent page lists its descendants' products too; keep each
+        // SKU's deepest observation this run, whatever the crawl order.
+        if (!isMoreSpecificObservation(observedDepthBySku.get(product.sku), depth)) {
           continue;
         }
-        if (isLeaf) {
-          skusSeenOnLeafPage.add(product.sku);
-        }
+        observedDepthBySku.set(product.sku, depth);
         // Stamp the category actually being crawled onto every observed
         // product rather than trusting whichever data-categoryId/data-category
         // happened to land on the winning (last-in-document-order) matching
@@ -131,10 +135,10 @@ export async function runCrawl(env: Env): Promise<RunSummary> {
         // matching [data-sku][data-productname] carries the same attributes.
         // This makes "every observed product's category_id is one this run
         // crawled" true by construction, which discontinuation scoping
-        // depends on. The one exception is deliberate: a parent-page
-        // observation of an already-stored product keeps its stored leaf
-        // category (preferSpecificCategory, at diff time) — that product
-        // is in observedProducts, so it's never wrongly marked unseen.
+        // depends on. The one exception is deliberate: a shallower
+        // observation of an already-stored product keeps its more specific
+        // stored category (preferSpecificCategory, at diff time) — that
+        // product is in observedProducts, so it's never wrongly marked unseen.
         observedProducts.set(product.sku, {
           ...product,
           categoryId: meta.categoryId,
@@ -163,6 +167,7 @@ export async function runCrawl(env: Env): Promise<RunSummary> {
 
   // 5. Diff against D1.
   const storedBySku = await getStoredProductsBySkus(env.DB, [...observedProducts.keys()]);
+  const categoryUrlById = await getCategoryUrlsById(env.DB);
   const deltaRows: Product[] = [];
   const upsertRows: { product: Product; dataHash: string }[] = [];
   let newCount = 0;
@@ -170,7 +175,14 @@ export async function runCrawl(env: Env): Promise<RunSummary> {
 
   for (const observed of observedProducts.values()) {
     const stored = storedBySku.get(observed.sku) ?? null;
-    const product = preferSpecificCategory(observed, skusSeenOnLeafPage.has(observed.sku), stored);
+    const storedCategoryUrl = stored ? categoryUrlById.get(stored.categoryId) : undefined;
+    const product = preferSpecificCategory(
+      observed,
+      observedDepthBySku.get(observed.sku) ?? 0,
+      stored,
+      storedCategoryUrl ? categoryDepth(storedCategoryUrl) : null,
+      stored !== null && crawledCategoryIds.has(stored.categoryId)
+    );
     const dataHash = await hashProduct(product);
     const status = classifyProduct(stored, dataHash);
 

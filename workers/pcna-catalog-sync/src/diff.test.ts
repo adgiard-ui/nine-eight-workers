@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyProduct, computeSkusToMarkUnseen, hashProduct, preferSpecificCategory } from "./diff";
+import { classifyProduct, computeSkusToMarkUnseen, hashProduct, isMoreSpecificObservation, preferSpecificCategory } from "./diff";
 import type { Product, StoredProductRow } from "./types";
 
 const baseProduct: Product = {
@@ -95,6 +95,7 @@ describe("computeSkusToMarkUnseen", () => {
 });
 
 describe("preferSpecificCategory", () => {
+  // Depth = path segments below /en-us/: "drinkware" = 1, "drinkware/tumblers" = 2.
   const observed: Product = {
     sku: "TM18611",
     publishProductId: "1",
@@ -106,20 +107,53 @@ describe("preferSpecificCategory", () => {
   };
   const stored = { category: "Half Zips", categoryId: "210" } as StoredProductRow;
 
-  it("keeps the stored (more specific) category when the observation came from a parent page", () => {
-    expect(preferSpecificCategory(observed, false, stored)).toEqual({ ...observed, category: "Half Zips", categoryId: "210" });
+  it("keeps a deeper stored category over a shallower observation", () => {
+    expect(preferSpecificCategory(observed, 1, stored, 3, false)).toEqual({ ...observed, category: "Half Zips", categoryId: "210" });
   });
 
-  it("uses the observed category when it came from a leaf page", () => {
-    expect(preferSpecificCategory(observed, true, stored)).toEqual(observed);
+  it("keeps the stored category on a tie (sibling categories don't flip-flop across rotation)", () => {
+    const sibling = { ...observed, category: "Quarter Zips", categoryId: "211" };
+    expect(preferSpecificCategory(sibling, 3, stored, 3, false)).toEqual({ ...sibling, category: "Half Zips", categoryId: "210" });
   });
 
-  it("uses the parent's category for a product with no stored row yet", () => {
-    expect(preferSpecificCategory(observed, false, null)).toEqual(observed);
+  it("upgrades a shallower stored category to a deeper observation, even from a non-leaf page", () => {
+    // Review finding: stored under root "Drinkware" (1), later seen on
+    // "drinkware/tumblers" (2), which is a non-leaf in the sitemap.
+    const tumbler = { ...observed, category: "Tumblers", categoryId: "300" };
+    const storedRoot = { category: "Drinkware", categoryId: "273" } as StoredProductRow;
+    expect(preferSpecificCategory(tumbler, 2, storedRoot, 1, false)).toEqual(tumbler);
   });
 
-  it("still carries the parent observation's other fields (price/name changes are not masked)", () => {
+  it("uses the observation when the stored category was re-crawled this run without this product (it moved)", () => {
+    expect(preferSpecificCategory(observed, 1, stored, 3, true)).toEqual(observed);
+  });
+
+  it("uses the observation when there is no stored row yet", () => {
+    expect(preferSpecificCategory(observed, 1, null, null, false)).toEqual(observed);
+  });
+
+  it("uses the observation when the stored category's depth is unknown (not a crawled department category)", () => {
+    const storedElsewhere = { category: "Clearance", categoryId: "900" } as StoredProductRow;
+    expect(preferSpecificCategory(observed, 1, storedElsewhere, null, false)).toEqual(observed);
+  });
+
+  it("still carries the observation's other fields when keeping the stored category", () => {
     const repriced = { ...observed, price: "45.00" };
-    expect(preferSpecificCategory(repriced, false, stored).price).toBe("45.00");
+    expect(preferSpecificCategory(repriced, 1, stored, 3, false).price).toBe("45.00");
+  });
+});
+
+describe("isMoreSpecificObservation", () => {
+  it("accepts the first observation of a SKU", () => {
+    expect(isMoreSpecificObservation(undefined, 1)).toBe(true);
+  });
+
+  it("replaces a shallower in-run observation with a deeper one, in either crawl order", () => {
+    expect(isMoreSpecificObservation(1, 2)).toBe(true);
+    expect(isMoreSpecificObservation(2, 1)).toBe(false);
+  });
+
+  it("keeps the first observation on a tie", () => {
+    expect(isMoreSpecificObservation(2, 2)).toBe(false);
   });
 });

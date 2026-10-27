@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  categoryDepth,
   decodeHtmlEntities,
   extractLocUrls,
   normalizeUrl,
@@ -112,6 +113,16 @@ describe("resolveCategoryMeta", () => {
       categoryId: "272",
       categoryName: "Bags",
     });
+  });
+
+  it("never resolves the decoy categoryId \"0\" via the regex fallback when #layout-category is missing", () => {
+    const html = `<input type="hidden" data-categoryId="0" data-category="" /><script>var config = { categoryId: 339 };</script>`;
+    expect(resolveCategoryMeta(html, "https://www.pcna.com/en-us/bags").categoryId).toBe("339");
+  });
+
+  it("returns a null categoryId rather than \"0\" when the only candidate is the placeholder", () => {
+    const html = `<input type="hidden" data-categoryId="0" data-category="" />`;
+    expect(resolveCategoryMeta(html, "https://www.pcna.com/en-us/bags").categoryId).toBeNull();
   });
 
   it("falls through to the regex fallback when data-categoryid is present but empty", () => {
@@ -256,6 +267,14 @@ describe("parseProductFragment", () => {
     expect(products).toHaveLength(1);
     expect(products[0].sku).toBe("2853-01");
     expect(products.find((p) => p.sku === "10317")).toBeUndefined();
+  });
+});
+
+describe("categoryDepth", () => {
+  it("counts path segments below /en-us/", () => {
+    expect(categoryDepth("https://www.pcna.com/en-us/drinkware")).toBe(1);
+    expect(categoryDepth("https://www.pcna.com/en-us/drinkware/tumblers")).toBe(2);
+    expect(categoryDepth("https://www.pcna.com/en-us/apparel/hoodies-fleece/hoodies-sweatshirts/quarter-zips/")).toBe(4);
   });
 });
 

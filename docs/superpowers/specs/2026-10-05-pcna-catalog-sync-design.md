@@ -300,8 +300,12 @@ current reference.
   (94 leaves + 24 parents/roots); at `MAX_CATEGORIES_PER_RUN = 50`, a full
   rotation takes 3 weekly runs.
 - **Category reassignment is no longer pure last-write-wins** (design
-  addition 3). A product seen only on a parent page keeps its stored,
-  more specific leaf category; only a leaf-page sighting can change it.
+  addition 3). A product takes the deepest category URL it's been seen
+  under; shallower or equal-depth sightings keep the stored category
+  unless that category was re-crawled this run without the product.
+  (2026-10-16 first did this with a leaf/non-leaf flag; the 2026-10-27
+  review showed sitemap "non-leaf" pages like `drinkware/tumblers` could
+  then never upgrade a product stored under a root, so it now uses depth.)
 - **Rotation query** (`db.ts`): ordering is unchanged, but the cap and the
   "still in this run's filtered sitemap" check are applied in JS rather
   than via `LIMIT`, so stale `categories` rows never take rotation slots.

@@ -51,10 +51,13 @@ Claude-based extraction step and are not wired to any code path yet.
   gifts-by-occasion/...) are excluded so they don't become a product's
   category. A run that matches zero categories fails loudly rather than
   reporting success.
-- Parent pages list their children's products, and the sitemap lists
-  only some children (so parents can't be skipped). A product observed
-  only on a parent page keeps the more specific category it already has;
-  only a leaf-page observation can change a product's category.
+- Parent pages list their descendants' products, and the sitemap lists
+  only some children (so parents can't be skipped). A product's category
+  is the deepest category URL it's been seen under: a deeper observation
+  always replaces the stored category; a shallower or equally deep one
+  keeps it (so rotation doesn't flip products between parent/child or
+  sibling categories) unless the stored category was re-crawled this run
+  without the product, meaning it moved.
 - `MAX_CATEGORIES_PER_RUN` caps category processing per run; categories
   are processed least-recently-crawled first, so coverage rotates. At
   118 categories and 50/run, one full rotation takes 3 weekly runs

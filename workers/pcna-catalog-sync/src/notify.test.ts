@@ -84,6 +84,17 @@ describe("postRunSummary", () => {
   });
 });
 
+describe("postRunSummary body-read failure", () => {
+  it("never throws when reading a non-2xx response body fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = new Response("x", { status: 503 });
+    vi.spyOn(res, "text").mockRejectedValue(new Error("connection reset"));
+    const fetchImpl = vi.fn().mockResolvedValue(res);
+
+    await expect(postRunSummary(envWith(WEBHOOK), summary, fetchImpl)).resolves.toBeUndefined();
+  });
+});
+
 describe("postRunFailure", () => {
   it("posts the error message", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));

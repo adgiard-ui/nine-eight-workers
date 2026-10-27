@@ -89,13 +89,19 @@ export function resolveCategoryMeta(
       .find((el) => /^[1-9]\d*$/.test(el.getAttribute("data-categoryid") ?? ""));
 
   const categoryIdAttr = pageElement?.getAttribute("data-categoryid");
-  const fallbackMatch = categoryPageHtml.match(/categoryId["']?\s*[:=]\s*["']?(\d+)/i);
+  // [1-9]: never the data-categoryId="0" placeholders described above.
+  const fallbackMatch = categoryPageHtml.match(/categoryId["']?\s*[:=]\s*["']?([1-9]\d*)/i);
   const categoryId = categoryIdAttr || fallbackMatch?.[1] || null;
 
   const categoryNameAttr = pageElement?.getAttribute("data-category");
   const categoryName = categoryNameAttr ? decodeHtmlEntities(categoryNameAttr) : deriveCategoryNameFromUrl(categoryUrl);
 
   return { categoryId, categoryName };
+}
+
+/** Path segments below /en-us/: "en-us/drinkware" = 1, "en-us/drinkware/tumblers" = 2. Deeper = more specific. */
+export function categoryDepth(categoryUrl: string): number {
+  return new URL(categoryUrl).pathname.split("/").filter(Boolean).length - 1;
 }
 
 function deriveCategoryNameFromUrl(categoryUrl: string): string {

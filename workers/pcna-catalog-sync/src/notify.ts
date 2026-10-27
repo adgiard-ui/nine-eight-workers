@@ -49,7 +49,10 @@ async function postText(env: Env, text: string, fetchImpl: typeof fetch): Promis
   }
 
   if (!res.ok) {
-    logger.error("pcna_notify_failed", { status: res.status, body: await res.text() });
+    // Reading the body can itself reject (connection reset mid-read); keep
+    // the never-throws contract either way.
+    const body = await res.text().catch(() => "(body unreadable)");
+    logger.error("pcna_notify_failed", { status: res.status, body });
   }
 }
 
